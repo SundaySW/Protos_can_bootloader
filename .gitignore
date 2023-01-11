@@ -1,3 +1,5 @@
 /cmake-build-release-mingw-stm32/
 /cmake-build-debug-mingw-stm32/
 /.idea/
+.mxproject
+Makefile

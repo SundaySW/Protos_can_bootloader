@@ -24,17 +24,25 @@ void CpuWatchDogUpdate(){
     //TODO UpdateWatchDog
 }
 
+inline void softReset(){
+    __disable_irq();
+    SysTick->CTRL = 0;
+    for(int i = 0; i < 8; i++)
+        NVIC->ICER[i] = 0xFFFFFFFF;
+    SCB->VTOR = CPU_USER_PROGRAM_VECTABLE_OFFSET & (unsigned int)0x1FFFFF80;
+    HAL_RCC_DeInit();
+    HAL_DeInit();
+    __enable_irq();
+}
+
 void CpuStartUserProgram()
 {
-    void (*pProgResetHandler)();
+    void (*start)();
     if (!FlashVerifyChecksum())
       return;
-    HAL_DeInit();
-    CpuIrqDisable();
-    SCB->VTOR = CPU_USER_PROGRAM_VECTABLE_OFFSET & (unsigned int)0x1FFFFF80;
-    pProgResetHandler = (void(*)())(*((uint32_t *) CPU_USER_PROGRAM_STARTADDR_PTR));
-    CpuIrqEnable();
-    pProgResetHandler();
+    softReset();
+    start = (void(*)())(*((uint32_t *) CPU_USER_PROGRAM_STARTADDR_PTR));
+    start();
 }
 
 void CpuMemSet(uint32_t dest, uint8_t value, uint16_t len)

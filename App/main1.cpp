@@ -1,3 +1,4 @@
+#include <Inc/i2c.h>
 #include "Bootloader.hpp"
 
 void fdcan_init(){
@@ -18,7 +19,8 @@ extern "C"
 //        CpuInit();
         FlashInit();
         fdcan_init();
-        bootLoader.init();
+        bootLoader.init(&hi2c2);
+        HAL_I2C_DeInit(&hi2c2);
     }
 
     void OnCANRx(FDCAN_RxHeaderTypeDef header, uint8_t* data)

@@ -34,26 +34,26 @@ using namespace Protos;
 
 class BootLoader : public BaseDevice{
 public:
-    BootLoader(DeviceUID::TYPE uidType, uint8_t family, uint8_t addr, FDCAN_HandleTypeDef* can, I2C_HandleTypeDef *i2c2)
-:       BaseDevice(uidType, family, addr, can)
-        ,I2CMaster(I2C(i2c2))
-        ,eeprom(&I2CMaster, EEPROM_I2C_ADDR)
+    BootLoader(DeviceUID::TYPE uidType, uint8_t family, uint8_t addr, FDCAN_HandleTypeDef* can)
+        : BaseDevice(uidType, family, addr, can)
     {
         savedFamily = family;
         savedAddress = addr;
     }
 
-    inline void readExternalEEPROM(){
+    inline void readExtEEPROM(I2C_HandleTypeDef *_i2c){
+        auto I2CMaster = I2C(I2C(_i2c));
+        auto eeprom = Eeprom24AAUID(&I2CMaster, EEPROM_I2C_ADDR);
         uint8_t r_data[6] = {0};
         eeprom.readUID(r_data);
         memcpy(&Uid.Data.I4, r_data, sizeof(uint32_t));
+        UID = Uid.Data.I1[3] + (Uid.Data.I1[2]<<8) + (Uid.Data.I1[1]<<16);
     }
 
-    void init(){
+    void init(I2C_HandleTypeDef *_i2c){
         readInternalEEPROM();
-        readExternalEEPROM();
+        readExtEEPROM(_i2c);
         initDataStructures();
-//        jumpToMainProg();
         startStayInBootTimer();
     }
 
@@ -95,12 +95,12 @@ public:
                 break;
             case MSGTYPE_BOOT_FLOW:
                 if(UID == bootMsg.GetMsgUID()){
-                    if (bootMsg.GetFlowCMDCode() == BOOT_FC_FINISH_FLASH)
-                        finishFlash(); //todo add finish flash on totalBlocks finish
-                    else if (bootMsg.GetFlowCMDCode() == BOOT_FC_STAY_IN_BOOT) {
-                        savedAddress = bootMsg.GetFlowMsgAddr();
-                        totalBlocks = bootMsg.GetTotalBlocks();
-                        stopStayInBootTimer();
+                    if (bootMsg.GetFlowCMDCode() == BOOT_FC_FINISH_FLASH){}
+                    if (bootMsg.GetFlowCMDCode() == BOOT_FC_STAY_IN_BOOT) {
+                            savedAddress = bootMsg.GetFlowMsgAddr();
+                            totalBlocks = bootMsg.GetTotalBlocks();
+                            savedFWVer = bootMsg.GetSWVer();
+                            stopStayInBootTimer();
                     }
                 }
                 break;
@@ -125,7 +125,7 @@ public:
         HAL_GPIO_TogglePin(LED_1_GPIO_Port, LED_1_Pin);
         if(stayInBootTimer == (WAIT_TIME_IN_BOOT_SEC - 1))
             sendHelloFromBoot();
-        if(stayInBootTimer <= 0) {
+        else if(stayInBootTimer <= 0) {
             stopStayInBootTimer();
             jumpToProg = true;
         }
@@ -251,6 +251,8 @@ protected:
             if(FlashWrite(addrCalc, writeLen, dataPtr)){
                 currentBlockNum++;
                 sendFCMessage(BOOT_FC_BLOCK_OK);
+                if(currentBlockNum >= totalBlocks)
+                    finishFlash();
             }else
                 sendFCMessage(BOOT_FC_FLASH_BLOCK_WRITE_FAIL);
         }else
@@ -275,6 +277,8 @@ protected:
         if(FlashWrite(addrCalc, writeLen, dataPtr)){
             currentBlockNum++;
             sendFCMessage(BOOT_FC_BLOCK_OK);
+            if(currentBlockNum >= totalBlocks)
+                finishFlash();
         }else
             sendFCMessage(BOOT_FC_FLASH_BLOCK_WRITE_FAIL);
         initDataStructures();
@@ -282,8 +286,8 @@ protected:
 
     inline void finishFlash(){
         FlashFinishWriteChecksum();
+        saveBoardDataToEEPROM();
         sendFCMessage(BOOT_FC_FLASH_READY);
-        PollPort();
         jumpToMainProg();
         //if ret from  CpuStartUserProgram() -> error
         currentBlockNum = 0;
@@ -291,10 +295,7 @@ protected:
         currentBlockCRC = 0;
         sendFCMessage(BOOT_FC_FLASH_NOT_READY); //TODO add error ERROR_ON_JUMP
     }
-
 private:
-    I2C I2CMaster;
-    Eeprom24AAUID eeprom;
     uint16_t currentBlockNum = 0,
             nOKPackets = 0,
             currentBlockCRC = 0,
@@ -357,16 +358,29 @@ private:
         int Offset = EEPROM_BOARD_DATA_ADDR;
         int bufferOffset = 0;
         eeprom_read_block(Offset, buffer, sizeof(buffer));
-        memcpy(&Uid.Data.I4, buffer, sizeof(Uid.Data.I4));
+//        memcpy(&Uid.Data.I4, buffer, sizeof(Uid.Data.I4));
         bufferOffset += sizeof(Uid.Data.I4);
         savedAddress = buffer[bufferOffset];
         bufferOffset += sizeof(savedAddress);
         savedHWVer = buffer[bufferOffset];
         bufferOffset += sizeof(savedHWVer);
         savedFWVer = buffer[bufferOffset];
-
-        UID = Uid.Data.I1[3] + (Uid.Data.I1[2]<<8) + (Uid.Data.I1[1]<<16);
+//        UID = Uid.Data.I1[3] + (Uid.Data.I1[2]<<8) + (Uid.Data.I1[1]<<16);
         Address = savedAddress;
+    }
+
+    inline void saveBoardDataToEEPROM(){
+        char buffer[EEPROM_BOARD_DATA_SIZE];
+        int Offset = EEPROM_BOARD_DATA_ADDR;
+        int bufferOffset=0;
+        memcpy(buffer+bufferOffset, &Uid.Data.I4, sizeof(uint32_t));
+        bufferOffset += sizeof(uint32_t);
+        memcpy(buffer+bufferOffset, &Address, sizeof(uint8_t));
+        bufferOffset += sizeof(uint8_t);
+        memcpy(buffer+bufferOffset, &savedHWVer, sizeof(uint8_t));
+        bufferOffset += sizeof(uint8_t);
+        memcpy(buffer+bufferOffset, &savedFWVer, sizeof(uint8_t));
+        eeprom_write_block(Offset, buffer, sizeof(buffer));
     }
 };
 
