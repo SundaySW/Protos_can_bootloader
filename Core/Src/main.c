@@ -53,7 +53,7 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-extern void while1_in_mainCpp();
+extern void AppLoop();
 extern void AppInit();
 /* USER CODE END PFP */
 
@@ -102,7 +102,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      while1_in_mainCpp();
+    AppLoop();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

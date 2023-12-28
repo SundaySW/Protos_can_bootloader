@@ -1,0 +1,22 @@
+#pragma once
+
+#include "sa_stm32_g4/eeprom_g4_map.hpp"
+
+#define WAIT_TIME_IN_BOOT_SEC (5)
+
+uint32_t EEPROM_START_ADDR = ADDR_FLASH_PAGE_63;
+
+enum BOARD_ERROR{
+    NO_ERROR,
+    CAN_ERROR,
+    EEPROM_ERROR,
+    UNEXPECTED_PACKET_IN_BLOCK,
+    LIMIT_SWITCH_ERROR,
+    STANDBY_MOVEMENT_ERROR,
+};
+
+enum HEX_CMD_IN_BOOT_MSG{
+    HEX_DATA = 0x00,
+    HEX_LAST_DATA = 0x01,
+    HEX_ADDRofMAIN = 0x05,
+};

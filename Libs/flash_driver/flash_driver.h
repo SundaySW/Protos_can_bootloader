@@ -9,7 +9,7 @@
 #define BOOT_FLASH_SIZE_KB                  (128)
 #define FLASH_INVALID_SECTOR_IDX            (0xff)
 #define FLASH_INVALID_ADDRESS               (0xffffffff)
-#define FLASH_WRITE_BLOCK_SIZE              (512)
+#define FLASH_WRITE_BLOCK_SIZE              (4096)
 #define FLASH_WRITE_FIRST_BLOCK_SIZE        (512)
 #define FLASH_ERASE_PAGE_SIZE               (FLASH_PAGE_SIZE)
 #define FLASH_TOTAL_SECTORS                 (sizeof(flashLayout)/sizeof(flashLayout[0]))
@@ -43,5 +43,6 @@ bool FlashFinishWriteChecksum();
 bool FlashVerifyChecksum();
 uint32_t getUserProgBaseAddress();
 void FlashCopyToVectorBlock(uint32_t src);
+void FlashCopyToVectorBlockStd(uint32_t src_addr);
 
 #endif /* FLASH_DRIVER_H */
