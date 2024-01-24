@@ -93,7 +93,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM3_Init();
   MX_TIM6_Init();
-  MX_I2C2_Init();
+//  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
   AppInit();
   /* USER CODE END 2 */

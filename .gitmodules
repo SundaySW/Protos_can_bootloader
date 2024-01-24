@@ -1,9 +1,9 @@
-[submodule "Ext_libs/sa_stm32_g4"]
-	path = Ext_libs/sa_stm32_g4
-	url = https://github.com/reus-inc/sa_stm32_g4
-[submodule "Ext_libs/protos_core"]
-	path = Ext_libs/protos_core
+[submodule "Libs/protos_core"]
+	path = Libs/protos_core
 	url = https://github.com/reus-inc/protos_core
-[submodule "Ext_libs/protos_can_device"]
-	path = Ext_libs/protos_can_device
+[submodule "Libs/protos_can_device"]
+	path = Libs/protos_can_device
 	url = https://github.com/reus-inc/protos_can_device
+[submodule "Libs/sa_stm32_g4"]
+	path = Libs/sa_stm32_g4
+	url = https://github.com/reus-inc/sa_stm32_g4

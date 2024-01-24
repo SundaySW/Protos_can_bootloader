@@ -14,30 +14,24 @@
 
 #include "app_config.hpp"
 
-static inline void delay(uint32_t delayms){
-    __HAL_TIM_DISABLE_IT(&htim3, TIM_IT_UPDATE);
-    HAL_TIM_Base_Start(&htim6);
-    TIM6->CNT = 0;
-    while(TIM6->CNT < delayms){}
-    HAL_TIM_Base_Stop(&htim6);
-    __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE);
-}
-
 using namespace Protos;
-
-#define BLOCK_SIZE_FLASH        (FLASH_WRITE_BLOCK_SIZE)
-#define BYTES_IN_PACKET         (8)
-#define PACKETS_IN_BLOCK        (BLOCK_SIZE_FLASH/BYTES_IN_PACKET)
-#define RESEND_PACKETS_N_TIMES  (10)
-#define EEPROM_I2C_ADDR         0x50
 
 class BootLoader : public BaseDevice{
 public:
+    BootLoader() = delete;
+    BootLoader(BootLoader&) = delete;
+    BootLoader(BootLoader&&) = delete;
+    BootLoader& operator = (BootLoader const &) = delete;
     BootLoader(DeviceUID::TYPE uidType, uint8_t family, uint8_t addr, FDCAN_HandleTypeDef* can)
         : BaseDevice(uidType, family, addr, can)
     {
         savedFamily = family;
         savedAddress = addr;
+    }
+
+    static BootLoader& getRef(){
+        static auto self = BootLoader(DeviceUID::TYPE_MICROCHIP, 0x1, 0x0, &hfdcan1);
+        return self;
     }
 
 //    void readExtEEPROM(I2C_HandleTypeDef *_i2c){
@@ -50,63 +44,68 @@ public:
 //    }
 
     void init(){
-//        readInternalEEPROM();
+        readInternalEEPROM();
         initDataStructures();
         startStayInBootTimer();
     }
 
-    void OnTimer(int ms) override{
-
-    }
+    void OnTimer(int ms) override{}
 
     void OnPoll() override {
         if(jumpToProg)
             jumpToMainProg();
     }
 
-    static void jumpToMainProg(){
+    void jumpToMainProg(){
         CpuStartUserProgram();
+        //error
+        ResetDataAfterError();
+        sendFCMessage(BOOT_FC_FLASH_NOT_READY);
     }
 
     void requestDataPackets(){
         if(nOKPackets > 0 && nOKPackets < expectedNOfPackets){
             unValidateBlock();
             uint16_t firstMissed = 0, lastMissed = 0;
-            for(int packetNum = 0; packetNum < PACKETS_IN_BLOCK; packetNum++) {
+            for(std::size_t packetNum = 0; packetNum < PACKETS_IN_BLOCK; packetNum++) {
                 if(correctPacketNums[packetNum] == 0xFFFF) {
                     if(!firstMissed)
-                        firstMissed = packetNum;
-                    lastMissed = packetNum;
+                        firstMissed = static_cast<uint16_t>(packetNum);
+                    lastMissed = static_cast<uint16_t>(packetNum);
                 }
             }
-            if(resendNTimes++ >= RESEND_PACKETS_N_TIMES){
-//                stopResendPacketsTimer();
-            }
+            if(resendNTimes++ >= RESEND_PACKETS_N_TIMES)
+                stopResendPacketsTimer();
             else
                 reStartResendPacketsTimer();
+
             uint16_t length = lastMissed - firstMissed + 1;
-            sendFCMessage(BOOT_FC_RESEND_PACKETS, firstMissed, length > 255 ? 255 : length);
+            sendFCMessage(BOOT_FC_RESEND_PACKETS, firstMissed, length > 255 ? 255 : static_cast<uint8_t>(length));
         }
     }
 
     void ProcessBootMessage(const Protos::BootMsg& bootMsg) override {
+        auto msg_uid = bootMsg.GetMsgUID();
         switch (bootMsg.GetMSGType()) {
             case MSGTYPE_BOOT_DATA:
                 if(blockValidated)
                     putToBuffer(bootMsg);
                 break;
             case MSGTYPE_BOOT_ADDR_CRC:
-                if(savedAddress == bootMsg.GetCRCMsgAddr()){
+                if(savedAddress == bootMsg.GetCRCMsgAddr())
                     validateBlock(bootMsg);
-                }else
+                else
                     unValidateBlock();
                 break;
             case MSGTYPE_BOOT_FLOW:
-                if(UID == bootMsg.GetMsgUID()){
-                    if (bootMsg.GetFlowCMDCode() == BOOT_FC_FINISH_FLASH)
-                    {}
+                if(UID == msg_uid){
+                    if (bootMsg.GetFlowCMDCode() == BOOT_FC_EXIT_BOOT)
+                        jumpToProg = true;
                     if (bootMsg.GetFlowCMDCode() == BOOT_FC_STAY_IN_BOOT) {
-                        savedAddress = bootMsg.GetFlowMsgAddr();
+                        if(auto new_addr = bootMsg.GetFlowMsgAddr(); new_addr != DEFAULT_DEVICE_ADDR){
+                            savedAddress = new_addr;
+                            Address = savedAddress;
+                        }
                         totalBlocks = bootMsg.GetTotalBlocks();
                         savedFWVer = bootMsg.GetSWVer();
                         stopStayInBootTimer();
@@ -143,7 +142,7 @@ public:
 
 protected:
     void validateBlock(const Protos::BootMsg& bootMsg){
-        uint16_t incomeBlockNum = bootMsg.GetAbsolutePacketNum() / BLOCK_SIZE_FLASH;
+        auto incomeBlockNum = static_cast<uint16_t>(bootMsg.GetAbsolutePacketNum() / BLOCK_SIZE_FLASH);
         if(currentBlockNum == incomeBlockNum){
             if(!nOKPackets){
                 currentBlockCRC = bootMsg.GetCRC16();
@@ -162,7 +161,7 @@ protected:
 
     void putToBuffer(const Protos::BootMsg& bootMsg){
         uint32_t absPacketNum = bootMsg.GetAbsolutePacketNum();
-        uint16_t receivedBlock = absPacketNum / BLOCK_SIZE_FLASH;
+        auto receivedBlock = static_cast<uint16_t>(absPacketNum / BLOCK_SIZE_FLASH);
         if(receivedBlock == currentBlockNum){
             reStartResendPacketsTimer();
             uint16_t bufferOffset = absPacketNum % BLOCK_SIZE_FLASH;
@@ -190,10 +189,6 @@ protected:
             currentCRC += blockBuffer[i];
         currentCRC = (((~currentCRC) + 1) & 0xffff);
         return incomeCRC == currentCRC;
-    }
-
-    void FreeTxQueue(){
-        Port.TransAll();
     }
 
     void sendFCMessage(uint8_t flowCode, uint16_t resendPacketsFrom = 0x0, uint8_t resendPacketsLen = 0){
@@ -287,7 +282,7 @@ protected:
                 dataPtr = &blockBuffer[FLASH_WRITE_FIRST_BLOCK_SIZE];
             }
         }
-        if(checkReceivedBlockCRC()){
+//        if(checkReceivedBlockCRC()){
             if(FlashWrite(addrCalc, writeLen, dataPtr)) {
                 currentBlockNum++;
                 sendFCMessage(BOOT_FC_BLOCK_OK);
@@ -295,8 +290,8 @@ protected:
                     finishFlash();
             }else
                 sendFCMessage(BOOT_FC_FLASH_BLOCK_WRITE_FAIL);
-        }else
-            sendFCMessage(BOOT_FC_BLOCK_CRC_FAIL);
+//        }else
+//            sendFCMessage(BOOT_FC_BLOCK_CRC_FAIL);
         initDataStructures();
     }
 
@@ -304,49 +299,58 @@ protected:
         FlashFinishWriteChecksum();
         saveBoardDataToEEPROM();
         sendFCMessage(BOOT_FC_FLASH_READY);
-        FreeTxQueue();
-        delay(1000);
         if(FlashVerifyChecksum())
-            jumpToProg = true;
+            return;
         //if ret from  FlashVerifyChecksum() -> error
-        currentBlockNum = 0;
-        nOKPackets = 0;
-        currentBlockCRC = 0;
-        sendFCMessage(BOOT_FC_FLASH_NOT_READY); //TODO add error ERROR_ON_JUMP
+        ResetDataAfterError();
+        sendFCMessage(BOOT_FC_FLASH_NOT_READY);
     }
 private:
+    uint8_t blockBuffer[BLOCK_SIZE_FLASH] = {0xFF,};
+    uint16_t correctPacketNums[PACKETS_IN_BLOCK] = {0xFFFF,};
+
+    uint32_t UID = 0;
+
     uint16_t currentBlockNum = 0,
             nOKPackets = 0,
             currentBlockCRC = 0,
-            currentBlockDataLen = 0;
-    uint8_t blockBuffer[BLOCK_SIZE_FLASH] = {0xFF,};
-    uint16_t correctPacketNums[PACKETS_IN_BLOCK] = {0xFFFF,};
-    uint16_t expectedNOfPackets = 0;
+            currentBlockDataLen = 0,
+            expectedNOfPackets = 0,
+            totalBlocks = 0;
+
+    uint8_t savedAddress = 0,
+            savedFamily = 0,
+            savedHWVer = 0,
+            savedFWVer = 0,
+            resendNTimes = 0,
+            stayInBootTimer = WAIT_TIME_IN_BOOT_SEC;
+
     bool blockValidated = false;
     bool jumpToProg = false;
-
-    uint32_t UID = 0;
-    uint8_t savedAddress = 0,
-        savedFamily = 0,
-        savedHWVer = 0,
-        savedFWVer = 0,
-        totalBlocks = 0,
-        resendNTimes = 0,
-        stayInBootTimer = WAIT_TIME_IN_BOOT_SEC;
 
     BOARD_ERROR currentError = NO_ERROR;
     [[noreturn]] static void errorHandler(BOARD_ERROR error){
         switch (error){
             case CAN_ERROR:
-                break;
             case EEPROM_ERROR:
-                break;
             default:
                 break;
         }
         //TODO mb remove
         Error_Handler();
         while (true){}
+    }
+
+    void ResetDataAfterError(){
+        currentBlockNum = 0;
+        nOKPackets = 0;
+        currentBlockCRC = 0;
+        currentBlockDataLen = 0;
+        expectedNOfPackets = 0;
+        totalBlocks = 0;
+        blockValidated = false;
+        jumpToProg = false;
+        initDataStructures();
     }
 
     void initDataStructures(){
@@ -377,21 +381,21 @@ private:
         int Offset = EEPROM_BOARD_DATA_START_ADDR;
         int bufferOffset = 0;
         eeprom_read_block(Offset, buffer, sizeof(buffer));
-//        memcpy(&Uid.Data.I4, buffer, sizeof(Uid.Data.I4));
+        memcpy(&Uid.Data.I4, buffer, sizeof(Uid.Data.I4));
         bufferOffset += sizeof(Uid.Data.I4);
         savedAddress = buffer[bufferOffset];
         bufferOffset += sizeof(savedAddress);
         savedHWVer = buffer[bufferOffset];
         bufferOffset += sizeof(savedHWVer);
         savedFWVer = buffer[bufferOffset];
-//        UID = Uid.Data.I1[3] + (Uid.Data.I1[2]<<8) + (Uid.Data.I1[1]<<16);
+        UID = static_cast<uint32_t>(Uid.Data.I1[3] + (Uid.Data.I1[2] << 8) + (Uid.Data.I1[1] << 16));
         Address = savedAddress;
     }
 
     void saveBoardDataToEEPROM(){
-        char buffer[EEPROM_BOARD_DATA_SIZE];
+        char buffer [EEPROM_BOARD_DATA_SIZE];
         int Offset = EEPROM_BOARD_DATA_START_ADDR;
-        int bufferOffset=0;
+        int bufferOffset = 0;
         memcpy(buffer+bufferOffset, &Uid.Data.I4, sizeof(uint32_t));
         bufferOffset += sizeof(uint32_t);
         memcpy(buffer+bufferOffset, &Address, sizeof(uint8_t));
